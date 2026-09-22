@@ -295,7 +295,9 @@ tr:hover td{background:#141e33!important;}
 </div>
 <div class="actions"><button class="green">Save Collection</button></div>
 </form></div>
-<div class="panel"><div class="sp-section-head"><h2>Collection History</h2><button class="sp-print-btn" title="Print collection history" onclick="printDetails('collectionTable')">🖨️</button></div><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Customer</th><th>Type</th><th>Amount</th></tr></thead><tbody id="collectionTable"></tbody></table></div></div>
+<div class="panel"><div class="sp-section-head"><h2>Collection History</h2><button class="sp-print-btn" title="Print collection history" onclick="printDetails('collectionTable')">🖨️</button></div>
+<div class="grid" style="margin-bottom:12px"><label>Collection Date<input id="collectionFilterDate" type="date" onchange="renderCollectionHistory()"></label><div class="actions" style="align-items:end"><button type="button" class="gray" onclick="clearCollectionDateFilter()">All Dates</button></div></div>
+<div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Customer</th><th>Type</th><th>Amount</th><th>Action</th></tr></thead><tbody id="collectionTable"></tbody></table></div></div>
 </section>
 </main>
 <div id="dashboardDetailsModal" class="hidden" style="position:fixed;inset:0;background:#0008;z-index:101;padding:20px;overflow:auto">
@@ -650,7 +652,7 @@ function render(){
  let td=0;db.daily.forEach(x=>{if(x.status==='Active'){let start=new Date(x.start+'T00:00:00'),now=new Date(today()+'T00:00:00'),elapsed=Math.floor((now-start)/86400000)+1;if(elapsed>=1&&elapsed<=x.days)td+=x.daily}});db.speed.forEach(x=>{if(x.status==='Pending'&&x.chequeDate===today())td+=x.total}); db.speedDay.forEach(x=>{if(x.status==='Active'&&loanAgeDays(x.startDate)>=1)td+=x.dailyInterest});
  dToday.textContent=money(td);
 
- customerTable.innerHTML=db.customers.map(c=>`<tr><td><button class="btn gray" onclick="openCustomerDetails('${c.id}')">${esc(c.name)}</button></td><td>${esc(c.phone)}</td><td>${esc(c.nic)}</td><td>${esc(c.address)}</td><td>${db.daily.filter(x=>x.customerId===c.id).length+db.speed.filter(x=>x.customerId===c.id).length+db.speedDay.filter(x=>x.customerId===c.id).length}</td><td><button class="btn gray" onclick="editCustomer('${c.id}')">Edit</button> <button class="btn red" onclick="deleteCustomer('${c.id}')">Delete</button></td></tr>`).join('')||'<tr><td colspan="6">No customers</td></tr>';
+ customerTable.innerHTML=db.customers.map(c=>`<tr><td><button class="btn gray" onclick="openCustomerDetails('${c.id}')" title="Open customer ledger">${esc(c.name)}</button></td><td>${esc(c.phone)}</td><td>${esc(c.nic)}</td><td>${esc(c.address)}</td><td>${db.daily.filter(x=>x.customerId===c.id).length+db.speed.filter(x=>x.customerId===c.id).length+db.speedDay.filter(x=>x.customerId===c.id).length}</td><td><button class="btn gray" onclick="editCustomer('${c.id}')">Edit</button> <button class="btn red" onclick="deleteCustomer('${c.id}')">Delete</button></td></tr>`).join('')||'<tr><td colspan="6">No customers</td></tr>';
 
  dailyTable.innerHTML=db.daily.map(x=>`<tr><td>${x.start||x.createdDate||'-'}</td><td>${esc(customerName(x.customerId))}</td><td>${money(x.capital)}</td><td>${x.interestPct}% / ${x.days} days</td><td>${money(x.total)}</td><td>${money(x.daily)}</td><td>${money(x.paid)}</td><td>${money(x.outstanding ?? Math.max(0,x.total-(x.paid||0)))}</td><td><span class="badge ${x.status==='Completed'?'cleared':'activeb'}">${x.status}</span>${x.autoExtended?'<div style="font-size:11px;margin-top:4px;color:#ea580c">3 Month Extension (+10% Full Capital)</div>':''}</td><td><button class="btn gray" onclick="editLoan('daily','${x.id}')">Modify</button></td></tr>`).join('')||'<tr><td colspan="9">No daily loans</td></tr>';
 
@@ -658,7 +660,7 @@ function render(){
 
  speedDayTable.innerHTML=db.speedDay.map(x=>`<tr><td>${x.startDate||x.createdDate||'-'}</td><td>${esc(customerName(x.customerId))}</td><td>${money(x.capital)}</td><td>${money(x.dailyInterest)}</td><td>${loanAgeDays(x.startDate)}</td><td>${money(x.interest)}</td><td>${money(x.total)}</td><td>${money(x.paid||0)}</td><td>${money(Math.max(0,x.total-(x.paid||0)))}</td><td><span class="badge ${x.status==='Completed'?'cleared':'activeb'}">${x.status}</span></td><td><button class="btn gray" onclick="editLoan('speedDay','${x.id}')">Modify</button></td></tr>`).join('')||'<tr><td colspan="10">No Speed Day loans</td></tr>';
 
- collectionTable.innerHTML=[...db.collections].reverse().map(x=>`<tr><td>${x.date}</td><td>${esc(customerName(x.customerId))}</td><td>${x.type}</td><td>${money(x.amount)}</td></tr>`).join('')||'<tr><td colspan="4">No collections</td></tr>';
+ renderCollectionHistory();
 
  let pending=db.speed.filter(x=>x.status==='Pending').sort((a,b)=>a.chequeDate.localeCompare(b.chequeDate)).slice(0,10);
  dashboardCheques.innerHTML=pending.length?'<div class="table-wrap"><table class="table"><tr><th>Customer</th><th>Cheque Date</th><th>Amount</th><th>Bank</th><th>Status</th></tr>'+pending.map(x=>`<tr><td>${esc(customerName(x.customerId))}</td><td>${x.chequeDate}</td><td>${money(x.total)}</td><td>${esc(x.bank)}</td><td><span class="badge pending">Pending</span></td></tr>`).join('')+'</table></div>':'No pending cheques.';
@@ -812,40 +814,107 @@ function showCustomerCollectionDetails(name){
 }
 function closeTotalCollection(){ document.getElementById('totalCollectionModal').classList.add('hidden'); }
 
+function renderCollectionHistory(){
+  const filterDate=document.getElementById('collectionFilterDate')?.value||'';
+  const rows=[...db.collections].filter(x=>!filterDate||String(x.date||'').slice(0,10)===filterDate).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  collectionTable.innerHTML=rows.map(x=>`<tr><td>${esc(x.date||'-')}</td><td><button class="btn gray" onclick="openCustomerDetails('${x.customerId}')">${esc(customerName(x.customerId))}</button></td><td>${esc(x.type||'-')}</td><td>${money(x.amount)}</td><td><button class="btn gray" onclick="editCollection('${x.id}')">Modify</button> <button class="btn red" onclick="deleteCollection('${x.id}')">Delete</button></td></tr>`).join('')||'<tr><td colspan="5">No collections for selected date</td></tr>';
+}
+function clearCollectionDateFilter(){
+  const el=document.getElementById('collectionFilterDate');
+  if(el) el.value='';
+  renderCollectionHistory();
+}
+
 function openCustomerDetails(id){
   const c=db.customers.find(x=>x.id===id); if(!c)return;
-  const daily=db.daily.filter(x=>x.customerId===id);
-  const speed=db.speed.filter(x=>x.customerId===id);
-  const speedDay=db.speedDay.filter(x=>x.customerId===id);
-  const cols=db.collections.filter(x=>x.customerId===id).sort((a,b)=>b.date.localeCompare(a.date));
-  const totalLoan=daily.reduce((s,x)=>s+x.total,0)+speed.reduce((s,x)=>s+x.total,0)+speedDay.reduce((s,x)=>s+x.total,0);
-  const paid=daily.reduce((s,x)=>s+(x.paid||0),0)+cols.filter(x=>x.type==='speed'||x.type==='speedDay').reduce((s,x)=>s+x.amount,0);
-  const outstanding=daily.reduce((s,x)=>s+(x.outstanding ?? Math.max(0,x.total-(x.paid||0))),0)+
-    speed.reduce((s,x)=>s+Math.max(0,x.total-(cols.filter(y=>y.loanId===x.id).reduce((a,y)=>a+y.amount,0))),0)+
-    speedDay.reduce((s,x)=>s+Math.max(0,x.total-(cols.filter(y=>y.loanId===x.id).reduce((a,y)=>a+y.amount,0))),0);
-  document.getElementById('modalCustomerName').textContent=c.name+' - Full Payment Details';
+  const loans=[
+    ...db.daily.filter(x=>x.customerId===id).map(x=>({...x,_type:'daily',_label:'Daily Collection',_date:x.start||x.createdDate||'-'})),
+    ...db.speed.filter(x=>x.customerId===id).map(x=>({...x,_type:'speed',_label:'Speed / Cheque',_date:x.createdDate||x.cashDate||'-'})),
+    ...db.speedDay.filter(x=>x.customerId===id).map(x=>({...x,_type:'speedDay',_label:'Speed Day',_date:x.startDate||x.createdDate||'-'}))
+  ].sort((a,b)=>String(b._date).localeCompare(String(a._date)));
+
+  let totalOpening=0,totalCollected=0,totalBalance=0;
+  const loanRows=loans.map((loan,loanIndex)=>{
+    const loanCols=db.collections.filter(x=>x.loanId===loan.id);
+    const capital=Number(loan.capital)||0;
+    const interest=Number(loan.interest)||0;
+    const opening=Number(loan.total)||capital+interest;
+    const collected=loanCols.reduce((sum,x)=>sum+(Number(x.amount)||0),0);
+    const balance=Math.max(0,opening-collected);
+    totalOpening+=opening;
+    totalCollected+=collected;
+    totalBalance+=balance;
+
+    return `<tr onclick="openLoanLedger('${loan.id}')" style="cursor:pointer" title="Click to open loan ledger">
+      <td><b>Loan ${loanIndex+1}</b></td>
+      <td>${esc(loan._date)}</td>
+      <td>${esc(loan._label)}</td>
+      <td>${money(capital)}</td>
+      <td>${money(interest)}</td>
+      <td><b>${money(opening)}</b></td>
+      <td>${money(collected)}</td>
+      <td><b>${money(balance)}</b></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('modalCustomerName').textContent=c.name+' - Customer Loans';
   document.getElementById('customerDetails').innerHTML=`
     <div class="cards">
-      <div class="card"><div class="label">Phone</div><div class="value">${esc(c.phone)}</div></div>
-      <div class="card"><div class="label">Total Payable</div><div class="value">${money(totalLoan)}</div></div>
-      <div class="card"><div class="label">Total Paid</div><div class="value">${money(paid)}</div></div>
-      <div class="card"><div class="label">Outstanding</div><div class="value">${money(outstanding)}</div></div>
+      <div class="card"><div class="label">Customer</div><div class="value">${esc(c.name)}</div></div>
+      <div class="card"><div class="label">Total Loan Opening</div><div class="value">${money(totalOpening)}</div></div>
+      <div class="card"><div class="label">Total Collection</div><div class="value">${money(totalCollected)}</div></div>
+      <div class="card"><div class="label">Total Balance</div><div class="value">${money(totalBalance)}</div></div>
     </div>
-    <div class="panel"><h2>Loans</h2>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Created Date</th><th>Type</th><th>Capital</th><th>Total</th><th>Paid</th><th>Outstanding</th><th>Status</th></tr></thead><tbody>
-      ${daily.map(x=>`<tr><td>${x.start||x.createdDate||'-'}</td><td>Daily</td><td>${money(x.capital)}</td><td>${money(x.total)}</td><td>${money(x.paid)}</td><td>${money(x.outstanding ?? x.total-(x.paid||0))}</td><td>${esc(x.status)}</td></tr>`).join('')}
-      ${speed.map(x=>{let pp=cols.filter(y=>y.loanId===x.id).reduce((s,y)=>s+y.amount,0);return `<tr><td>${x.createdDate||x.cashDate||'-'}</td><td>Speed / Cheque</td><td>${money(x.capital)}</td><td>${money(x.total)}</td><td>${money(pp)}</td><td>${money(Math.max(0,x.total-pp))}</td><td>${esc(x.status)}</td></tr>`}).join('')}
-      ${speedDay.map(x=>{let pp=cols.filter(y=>y.loanId===x.id).reduce((s,y)=>s+y.amount,0);return `<tr><td>${x.createdDate||x.startDate||'-'}</td><td>Speed Day</td><td>${money(x.capital)}</td><td>${money(x.total)}</td><td>${money(pp)}</td><td>${money(Math.max(0,x.total-pp))}</td><td>${esc(x.status)}</td></tr>`}).join('')}
-      </tbody></table></div>
-    </div>
-    <div class="panel"><h2>Full Payment History</h2>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th>Loan Type</th><th>Amount</th></tr></thead><tbody>
-      ${cols.map(x=>`<tr><td>${x.date}</td><td>${x.type==='daily'?'Daily Collection':x.type==='speedDay'?'Speed Day':'Speed / Cheque'}</td><td>${money(x.amount)}</td></tr>`).join('')||'<tr><td colspan="3">No payments yet</td></tr>'}
-      </tbody></table></div>
+    <div class="panel" style="margin-top:16px">
+      <h2>Customer Loans</h2>
+      <p style="margin:0 0 12px;color:#666">Each loan is shown in one row. <b>Click any loan row</b> to open its full ledger.</p>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Loan</th><th>Date</th><th>Type</th><th>Capital</th><th>Interest</th><th>Opening Loan</th><th>Collected</th><th>Balance</th></tr></thead>
+        <tbody>${loanRows || '<tr><td colspan="8">No loans found for this customer.</td></tr>'}</tbody>
+      </table></div>
     </div>`;
   document.getElementById('customerModal').classList.remove('hidden');
 }
 function closeCustomerDetails(){document.getElementById('customerModal').classList.add('hidden');}
+function openLoanLedger(loanId){
+  const loan=[...db.daily,...db.speed,...db.speedDay].find(x=>x.id===loanId); if(!loan)return;
+  const c=db.customers.find(x=>x.id===loan.customerId); if(!c)return;
+  const type=db.daily.some(x=>x.id===loanId)?'Daily Collection':db.speed.some(x=>x.id===loanId)?'Speed / Cheque':'Speed Day';
+  const date=loan.startDate||loan.start||loan.createdDate||loan.cashDate||'-';
+  const capital=Number(loan.capital)||0;
+  const interest=Number(loan.interest)||0;
+  const opening=Number(loan.total)||capital+interest;
+  const cols=db.collections.filter(x=>x.loanId===loanId).sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+  let running=opening;
+  const rows=cols.map(x=>{
+    const amount=Number(x.amount)||0, before=running;
+    running=Math.max(0,running-amount);
+    return `<tr><td>${esc(x.date||'-')}</td><td>${money(before)}</td><td>${money(amount)}</td><td>${money(running)}</td></tr>`;
+  }).join('');
+  document.getElementById('modalCustomerName').textContent=c.name+' - Loan Ledger';
+  document.getElementById('customerDetails').innerHTML=`
+    <div style="margin-bottom:12px"><button class="btn gray" onclick="openCustomerDetails('${c.id}')">← Back to Customer Loans</button></div>
+    <div class="cards">
+      <div class="card"><div class="label">Customer</div><div class="value">${esc(c.name)}</div></div>
+      <div class="card"><div class="label">Loan Type</div><div class="value">${esc(type)}</div></div>
+      <div class="card"><div class="label">Loan Date</div><div class="value">${esc(date)}</div></div>
+      <div class="card"><div class="label">Capital</div><div class="value">${money(capital)}</div></div>
+      <div class="card"><div class="label">Interest</div><div class="value">${money(interest)}</div></div>
+      <div class="card"><div class="label">Opening Loan</div><div class="value">${money(opening)}</div></div>
+      <div class="card"><div class="label">Total Collection</div><div class="value">${money(opening-running)}</div></div>
+      <div class="card"><div class="label">Balance</div><div class="value">${money(running)}</div></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2>Loan Ledger</h2>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Date</th><th>Opening Balance</th><th>Collection</th><th>Closing Balance</th></tr></thead>
+        <tbody>
+          <tr><td>${esc(date)}</td><td>-</td><td>-</td><td><b>${money(opening)}</b></td></tr>
+          ${rows || '<tr><td colspan="4">No collections for this loan</td></tr>'}
+        </tbody>
+      </table></div>
+    </div>`;
+}
 
 
 function allLoanRows(){
@@ -935,6 +1004,40 @@ document.getElementById('summaryType').onchange=renderLoanSummary;
 document.getElementById('summaryCustomer').onchange=renderLoanSummary;
 document.getElementById('summaryStatus').onchange=renderLoanSummary;
 document.getElementById('summarySearch').oninput=renderLoanSummary;
+
+async function editCollection(id){
+ const c=db.collections.find(x=>x.id===id); if(!c)return;
+ const amountStr=prompt('Collection Amount',String(c.amount??'')); if(amountStr===null)return;
+ const amount=Number(amountStr); if(!Number.isFinite(amount)||amount<=0){toast('Enter a valid collection amount');return;}
+ const date=prompt('Collection Date (YYYY-MM-DD)',c.date||today()); if(date===null)return;
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){toast('Enter date as YYYY-MM-DD');return;}
+ const loan=[...db.daily,...db.speed,...db.speedDay].find(x=>x.id===c.loanId);
+ const oldAmount=Number(c.amount)||0; c.amount=amount; c.date=date;
+ if(loan){
+  const paid=db.collections.filter(v=>v.loanId===loan.id).reduce((sum,v)=>sum+Number(v.amount||0),0);
+  if(c.type==='daily'||c.type==='speedDay'){loan.paid=paid; loan.outstanding=Math.max(0,Number(loan.total||0)-paid); loan.status=paid>=Number(loan.total||0)&&Number(loan.total||0)>0?'Completed':'Active';}
+  else loan.status=paid>=Number(loan.total||0)&&Number(loan.total||0)>0?'Cleared':'Pending';
+ }
+ const ok=await syncRecord('collection',c,'update');
+ if(!ok){c.amount=oldAmount;toast('Collection modify failed: '+lastDbError);return;}
+ render(); toast('Collection modified ✓');
+}
+
+async function deleteCollection(id){
+ const c=db.collections.find(x=>x.id===id); if(!c)return;
+ if(!confirm(`Delete this collection of ${money(c.amount)}?`))return;
+ const loan=[...db.daily,...db.speed,...db.speedDay].find(x=>x.id===c.loanId); const oldCollections=[...db.collections];
+ db.collections=db.collections.filter(x=>x.id!==id);
+ if(loan){
+  const paid=db.collections.filter(v=>v.loanId===loan.id).reduce((sum,v)=>sum+Number(v.amount||0),0);
+  if(c.type==='daily'||c.type==='speedDay'){loan.paid=paid; loan.outstanding=Math.max(0,Number(loan.total||0)-paid); loan.status=paid>=Number(loan.total||0)&&Number(loan.total||0)>0?'Completed':'Active';}
+  else loan.status=paid>=Number(loan.total||0)&&Number(loan.total||0)>0?'Cleared':'Pending';
+ }
+ try{
+  const {error}=await supabaseClient.from('collections').delete().eq('id',id); if(error)throw error;
+  render(); toast('Collection deleted ✓');
+ }catch(e){db.collections=oldCollections;render();lastDbError=dbErr(e);toast('Collection delete failed: '+lastDbError);}
+}
 
 function deleteCustomer(id){if(confirm('Delete this customer? Existing loans will remain.')){db.customers=db.customers.filter(x=>x.id!==id);save();toast('Customer deleted')}}
 function changeCheque(id){let x=db.speed.find(a=>a.id===id);let s=prompt('Enter status: Pending / Cleared / Returned',x.status);if(['Pending','Cleared','Returned'].includes(s)){x.status=s;save();}}
